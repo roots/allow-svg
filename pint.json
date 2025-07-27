@@ -1,0 +1,9 @@
+{
+    "rules": {
+        "declare_strict_types": true
+    },
+    "exclude": [
+        "vendor",
+        "lib"
+    ]
+}

@@ -1,0 +1,33 @@
+# Dependencies
+/vendor/
+/node_modules/
+
+# Build artifacts
+/build/
+
+# Testing
+/coverage/
+/.phpunit.cache/
+/test-results/
+/playwright-report/
+
+# IDE
+/.vscode/
+/.idea/
+*.swp
+*.swo
+
+# OS
+.DS_Store
+Thumbs.db
+
+# WordPress
+/.wp-env.override.json
+
+# Temporary files
+*.log
+*.tmp
+*.temp
+
+# Composer
+/composer.phar
