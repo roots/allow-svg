@@ -22,9 +22,13 @@ composer.lock text eol=lf
 tests/** text eol=lf
 
 # Exclude from archives
+/.editorconfig export-ignore
+/.gitattributes export-ignore
+/.gitignore export-ignore
 /.github/ export-ignore
 /.wp-env.json export-ignore
 /tests/ export-ignore
+/composer.lock export-ignore
 /phpunit.xml export-ignore
 /playwright.config.js export-ignore
 /pint.json export-ignore
