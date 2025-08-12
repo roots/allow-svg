@@ -78,8 +78,8 @@ class SvgUploadHandler
             '/<\!\[CDATA\[.*?(script|javascript).*?\]\]>/is',
 
             // Additional obfuscation patterns
-            '/\\u[0-9a-f]{4}/i', // Unicode escapes
-            '/\\x[0-9a-f]{2}/i', // Hex escapes
+            '/\\\\u[0-9a-f]{4}/i', // Unicode escapes
+            '/\\\\x[0-9a-f]{2}/i', // Hex escapes
             '/eval\s*\(/i', // eval() calls
             '/setTimeout\s*\(/i', // setTimeout calls
             '/setInterval\s*\(/i', // setInterval calls
@@ -299,7 +299,7 @@ class SvgUploadHandler
         }
 
         // Check for Unicode and hex escapes in decoded content
-        if (preg_match('/\\\\u[0-9a-f]{4}/i', $decodedContent) || preg_match('/\\\\x[0-9a-f]{2}/i', $decodedContent)) {
+        if (preg_match('/\\\\\\\\u[0-9a-f]{4}/i', $decodedContent) || preg_match('/\\\\\\\\x[0-9a-f]{2}/i', $decodedContent)) {
             return false;
         }
 
