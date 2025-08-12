@@ -5,7 +5,7 @@ declare(strict_types=1);
 /**
  * Plugin Name: Allow SVG
  * Description: SVG support for WordPress
- * Version: 1.0.0
+ * Version: 1.0.1
  * Author: Roots
  * Author URI: https://roots.io
  * License: MIT
