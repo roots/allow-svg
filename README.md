@@ -1,14 +1,17 @@
-<p align="center">
-  <a href="https://packagist.org/packages/roots/allow-svg"><img alt="Packagist Downloads" src="https://img.shields.io/packagist/dt/roots/allow-svg?label=downloads&colorB=2b3072&colorA=525ddc&style=flat-square"></a>
-  <a href="https://github.com/roots/allow-svg/actions/workflows/tests.yml"><img alt="Build Status" src="https://img.shields.io/github/actions/workflow/status/roots/allow-svg/tests.yml?branch=main&logo=github&label=CI&style=flat-square"></a>
-  <a href="https://bsky.app/profile/roots.io"><img alt="Follow roots.io on Bluesky" src="https://img.shields.io/badge/follow-@roots.io-0085ff?logo=bluesky&style=flat-square"></a>
-</p>
-
 # Allow SVG
+
+<a href="https://packagist.org/packages/roots/allow-svg"><img alt="Packagist Downloads" src="https://img.shields.io/packagist/dt/roots/allow-svg?label=downloads&colorB=2b3072&colorA=525ddc&style=flat-square"></a>
+<a href="https://github.com/roots/allow-svg/actions/workflows/tests.yml"><img alt="Build Status" src="https://img.shields.io/github/actions/workflow/status/roots/allow-svg/tests.yml?branch=main&logo=github&label=CI&style=flat-square"></a>
+<a href="https://twitter.com/rootswp"><img alt="Follow Roots" src="https://img.shields.io/badge/follow%20@rootswp-1da1f2?logo=twitter&logoColor=ffffff&message=&style=flat-square"></a>
+<a href="https://github.com/sponsors/roots"><img src="https://img.shields.io/badge/sponsor%20roots-525ddc?logo=github&style=flat-square&logoColor=ffffff&message=" alt="Sponsor Roots"></a>
 
 A WordPress plugin that enables SVG uploads with validation to block malicious files.
 
 > WordPress still lacks native SVG support after [12+ years of discussion](https://core.trac.wordpress.org/ticket/24251)
+
+## Support us
+
+We're dedicated to pushing modern WordPress development forward through our open source projects, and we need your support to keep building. You can support our work by purchasing [Radicle](https://roots.io/radicle/), our recommended WordPress stack, or by [sponsoring us on GitHub](https://github.com/sponsors/roots). Every contribution directly helps us create better tools for the WordPress ecosystem.
 
 ## Features
 
@@ -91,11 +94,12 @@ This plugin uses a **deny-first approach**: it doesn't attempt to sanitize SVGs,
 - **Entity Expansion Limits** — Rejects suspicious `&entity;` usage
 - Uses `DOMDocument` with external entities disabled
 
-## Sponsors
+## Community
 
-Allow SVG is an open source project and completely free to use. If you've benefited from our projects and would like to support our future endeavors, [please consider sponsoring us](https://github.com/sponsors/roots).
+Keep track of development and community news.
 
-## Support
-
-- GitHub Issues: https://github.com/roots/allow-svg/issues
-- Roots Discourse: https://discourse.roots.io/
+- Join us on Discord by [sponsoring us on GitHub](https://github.com/sponsors/roots)
+- Join us on [Roots Discourse](https://discourse.roots.io/)
+- Follow [@rootswp on Twitter](https://twitter.com/rootswp)
+- Follow the [Roots Blog](https://roots.io/blog/)
+- Subscribe to the [Roots Newsletter](https://roots.io/subscribe/)
