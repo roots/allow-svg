@@ -39,8 +39,9 @@ class SvgUploadHandler
             '/javascript:/i',
 
             // Event handlers (comprehensive coverage)
-            '/\bon\w+\s*=/i', // Event handlers like onclick, onload, etc.
-            '/on[a-zA-Z]+\s*=/i', // Additional event handler patterns (onmouseover, onfocus, etc.)
+            // Event handlers like onclick and onload: an attribute name that
+            // starts with "on", so data-onclick and similar don't match.
+            '/(?<![\w-])on[a-z]+\s*=/i',
 
             // Dangerous tags and elements
             '/<iframe\b/i',
@@ -303,12 +304,42 @@ class SvgUploadHandler
             return false;
         }
 
+        if ($this->hasScriptUrl($decodedContent)) {
+            return false;
+        }
+
         // Additional XML parsing with disabled external entities for XXE protection
         if (! $this->isValidXml($content)) {
             return false;
         }
 
         return true;
+    }
+
+    /**
+     * Checks attribute values for script URLs split up to slip past the
+     * patterns: browsers drop tabs, newlines and other control characters from
+     * URLs, so "java\tscript:" still runs. Values are compared with all
+     * whitespace and control characters removed.
+     *
+     * @param  string  $content  The entity-decoded content.
+     * @return bool True if an attribute value holds a script URL.
+     */
+    private function hasScriptUrl(string $content): bool
+    {
+        if (! preg_match_all('/=\s*(["\'])(.*?)\1/s', $content, $matches)) {
+            return false;
+        }
+
+        foreach ($matches[2] as $value) {
+            $compact = strtolower(preg_replace('/[\s\x00-\x1F\x7F]+/', '', $value));
+
+            if (str_contains($compact, 'javascript:') || str_contains($compact, 'vbscript:')) {
+                return true;
+            }
+        }
+
+        return false;
     }
 
     /**

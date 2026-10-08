@@ -369,6 +369,23 @@ final class SvgSecurityValidatorTest extends PolyfillTestCase
         $this->assertFalse($result);
     }
 
+    public function test_is_valid_svg_rejects_javascript_split_by_control_characters(): void
+    {
+        // Browsers drop tabs and newlines from URLs, so each of these runs as javascript:
+        $hrefs = [
+            'tab' => "java\tscript:alert(1)",
+            'newline' => "java\nscript:alert(1)",
+            'encoded tab' => 'java&#x09;script:alert(1)',
+            'encoded newline' => 'java&#10;script:alert(1)',
+        ];
+
+        foreach ($hrefs as $case => $href) {
+            $svg = '<svg xmlns="http://www.w3.org/2000/svg"><a href="'.$href.'">Click</a></svg>';
+
+            $this->assertFalse($this->handler->isValidSvg($svg), "Accepted a javascript: URL split by a {$case}.");
+        }
+    }
+
     public function test_is_valid_svg_rejects_entity_encoded_scripts_after_decoding(): void
     {
         $entityEncodedScript = '<svg xmlns="http://www.w3.org/2000/svg">
