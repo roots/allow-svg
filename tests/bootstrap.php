@@ -3,11 +3,26 @@
 declare(strict_types=1);
 
 require_once __DIR__.'/../vendor/autoload.php';
-require_once __DIR__.'/../allow-svg.php';
 
-// WordPress test environment constants
+// WordPress test environment constants. Defined before the plugin loads: it
+// exits when ABSPATH isn't set, which ended the test run with a passing status.
 define('WP_CONTENT_DIR', '/tmp/wp-content');
 define('ABSPATH', '/tmp/wordpress/');
+
+// The plugin registers its hooks as it loads.
+if (! function_exists('add_filter')) {
+    function add_filter(string $hook, callable $callback, int $priority = 10, int $acceptedArgs = 1): bool
+    {
+        return true;
+    }
+}
+
+if (! function_exists('add_action')) {
+    function add_action(string $hook, callable $callback, int $priority = 10, int $acceptedArgs = 1): bool
+    {
+        return true;
+    }
+}
 
 // Mock WordPress functions for unit tests
 if (! function_exists('wp_check_filetype')) {
@@ -63,3 +78,5 @@ if (! function_exists('error_log')) {
         return true;
     }
 }
+
+require_once __DIR__.'/../allow-svg.php';
