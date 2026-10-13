@@ -222,8 +222,10 @@ class SvgUploadHandler
             return $upload;
         }
 
-        // Validate file path security
-        $filePath = realpath($upload['file']);
+        // Validate file path security. Uploads kept in remote storage behind a
+        // stream wrapper (e.g. s3://) have no real path; the file functions
+        // below read them through the wrapper as they are.
+        $filePath = wp_is_stream($upload['file']) ? $upload['file'] : realpath($upload['file']);
         if ($filePath === false || ! is_file($filePath)) {
             return [
                 'error' => 'Invalid file path.',

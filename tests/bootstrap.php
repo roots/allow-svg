@@ -79,4 +79,17 @@ if (! function_exists('error_log')) {
     }
 }
 
+if (! function_exists('wp_is_stream')) {
+    function wp_is_stream(string $path): bool
+    {
+        $schemeSeparator = strpos($path, '://');
+
+        if ($schemeSeparator === false) {
+            return false;
+        }
+
+        return in_array(substr($path, 0, $schemeSeparator), stream_get_wrappers(), true);
+    }
+}
+
 require_once __DIR__.'/../allow-svg.php';
