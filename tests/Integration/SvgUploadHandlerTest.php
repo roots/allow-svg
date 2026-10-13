@@ -5,6 +5,7 @@ declare(strict_types=1);
 namespace AllowSvg\Tests\Integration;
 
 use AllowSvg\SvgUploadHandler;
+use AllowSvg\Tests\Support\TestStreamWrapper;
 use Yoast\PHPUnitPolyfills\TestCases\TestCase as PolyfillTestCase;
 
 final class SvgUploadHandlerTest extends PolyfillTestCase
@@ -340,5 +341,56 @@ final class SvgUploadHandlerTest extends PolyfillTestCase
         $this->assertEquals(0, $result['error']);
 
         unlink($testFile);
+    }
+
+    public function test_handle_svg_upload_result_accepts_valid_svg_in_stream_storage(): void
+    {
+        TestStreamWrapper::register();
+        $url = TestStreamWrapper::url('valid.svg');
+        file_put_contents($url, file_get_contents($this->fixturesPath.'valid.svg'));
+
+        $upload = [
+            'file' => $url,
+            'url' => 'https://example.com/uploads/valid.svg',
+            'type' => 'image/svg+xml',
+        ];
+
+        $result = $this->handler->handleSvgUploadResult($upload);
+
+        $this->assertSame($upload, $result);
+        $this->assertFileExists($url);
+
+        unlink($url);
+        TestStreamWrapper::unregister();
+    }
+
+    public function test_handle_svg_upload_result_rejects_malicious_svg_in_stream_storage(): void
+    {
+        TestStreamWrapper::register();
+        $url = TestStreamWrapper::url('malicious.svg');
+        file_put_contents($url, file_get_contents($this->fixturesPath.'malicious-script.svg'));
+
+        $result = $this->handler->handleSvgUploadResult([
+            'file' => $url,
+            'url' => 'https://example.com/uploads/malicious.svg',
+            'type' => 'image/svg+xml',
+        ]);
+
+        $this->assertArrayHasKey('error', $result);
+        $this->assertStringContainsString('dangerous content', $result['error']);
+        $this->assertFileDoesNotExist($url);
+
+        TestStreamWrapper::unregister();
+    }
+
+    public function test_handle_svg_upload_result_rejects_missing_local_file(): void
+    {
+        $result = $this->handler->handleSvgUploadResult([
+            'file' => sys_get_temp_dir().'/allow-svg-missing.svg',
+            'url' => 'https://example.com/uploads/allow-svg-missing.svg',
+            'type' => 'image/svg+xml',
+        ]);
+
+        $this->assertSame(['error' => 'Invalid file path.'], $result);
     }
 }
