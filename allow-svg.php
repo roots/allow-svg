@@ -304,7 +304,7 @@ class SvgUploadHandler
             return false;
         }
 
-        if ($this->hasScriptUrl($decodedContent)) {
+        if ($this->hasScriptUrl($content)) {
             return false;
         }
 
@@ -319,27 +319,42 @@ class SvgUploadHandler
     /**
      * Checks attribute values for script URLs split up to slip past the
      * patterns: browsers drop tabs, newlines and other control characters from
-     * URLs, so "java\tscript:" still runs. Values are compared with all
-     * whitespace and control characters removed.
+     * URLs, so "java&#9;script:" still runs. Values are read from the parsed
+     * document, so character references are resolved and text, comments and
+     * value size can't hide an attribute, then compared with all whitespace
+     * and control characters removed.
      *
-     * @param  string  $content  The entity-decoded content.
-     * @return bool True if an attribute value holds a script URL.
+     * @param  string  $content  The SVG content.
+     * @return bool True if an attribute value holds a script URL, or the content doesn't parse.
      */
     private function hasScriptUrl(string $content): bool
     {
-        if (! preg_match_all('/=\s*(["\'])(.*?)\1/s', $content, $matches)) {
-            return false;
-        }
+        $originalInternalErrors = libxml_use_internal_errors(true);
 
-        foreach ($matches[2] as $value) {
-            $compact = strtolower(preg_replace('/[\s\x00-\x1F\x7F]+/', '', $value));
+        try {
+            $dom = new \DOMDocument;
+            $dom->resolveExternals = false;
+            $dom->substituteEntities = false;
 
-            if (str_contains($compact, 'javascript:') || str_contains($compact, 'vbscript:')) {
+            if (! $dom->loadXML($content, LIBXML_NONET | LIBXML_PARSEHUGE)) {
                 return true;
             }
-        }
 
-        return false;
+            foreach ((new \DOMXPath($dom))->query('//@*') as $attribute) {
+                $compact = strtolower(preg_replace('/[\x00-\x20\x7F]+/', '', $attribute->value) ?? '');
+
+                foreach (['javascript:', 'vbscript:', 'data:text/html'] as $scheme) {
+                    if (str_contains($compact, $scheme)) {
+                        return true;
+                    }
+                }
+            }
+
+            return false;
+        } finally {
+            libxml_use_internal_errors($originalInternalErrors);
+            libxml_clear_errors();
+        }
     }
 
     /**

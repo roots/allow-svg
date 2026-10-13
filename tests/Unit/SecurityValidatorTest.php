@@ -5,6 +5,7 @@ declare(strict_types=1);
 namespace AllowSvg\Tests\Unit;
 
 use AllowSvg\SvgUploadHandler;
+use PHPUnit\Framework\Attributes\DataProvider;
 use Yoast\PHPUnitPolyfills\TestCases\TestCase as PolyfillTestCase;
 
 final class SvgSecurityValidatorTest extends PolyfillTestCase
@@ -369,21 +370,55 @@ final class SvgSecurityValidatorTest extends PolyfillTestCase
         $this->assertFalse($result);
     }
 
-    public function test_is_valid_svg_rejects_javascript_split_by_control_characters(): void
+    /**
+     * Browsers drop tabs and newlines from URLs, so each of these runs as a
+     * script URL. XML turns a literal tab or newline in an attribute into a
+     * space, but HTML doesn't, which matters when an SVG is inlined into a page.
+     */
+    public static function splitScriptUrlProvider(): array
     {
-        // Browsers drop tabs and newlines from URLs, so each of these runs as javascript:
-        $hrefs = [
-            'tab' => "java\tscript:alert(1)",
-            'newline' => "java\nscript:alert(1)",
-            'encoded tab' => 'java&#x09;script:alert(1)',
-            'encoded newline' => 'java&#10;script:alert(1)',
+        $link = fn (string $attributes, string $before = '') => '<svg xmlns="http://www.w3.org/2000/svg">'.$before.'<a '.$attributes.'><text>Click</text></a></svg>';
+
+        return [
+            'tab' => [$link("href=\"java\tscript:alert(1)\"")],
+            'newline' => [$link("href=\"java\nscript:alert(1)\"")],
+            'encoded tab' => [$link('href="java&#x09;script:alert(1)"')],
+            'encoded newline' => [$link('href="java&#10;script:alert(1)"')],
+            'encoded carriage return with leading zeros' => [$link('href="java&#x000D;script:alert(1)"')],
+            'single-quoted value' => [$link("href='java&#9;script:alert(1)'")],
+            'vbscript' => [$link('href="vb&#9;script:msgbox(1)"')],
+            'data: HTML' => [$link('', '<a><set attributeName="href" to="data:text/h&#9;tml,%3Cscript%3Ealert(1)%3C/script%3E"/></a>')],
+            'SMIL set' => [$link('', '<a><set attributeName="href" to="java&#9;script:alert(1)"/></a>')],
+            'SMIL animate values' => [$link('', '<a><animate attributeName="href" values="#;java&#9;script:alert(1)"/></a>')],
+            'after a quote in a comment' => [$link('href="java&#9;script:alert(1)"', '<!--="-->')],
+            'after a quote in text' => [$link('href="java&#9;script:alert(1)"', '<text>x="</text>')],
+            'after a quote in a processing instruction' => [$link('href="java&#9;script:alert(1)"', '<?x ="?>')],
+            'after a quote in CDATA' => [$link('href="java&#9;script:alert(1)"', '<text><![CDATA[="]]></text>')],
+            'after a value over 1MB' => [$link('href="java&#9;script:alert(1)"', '<path d="'.str_repeat('M0 0L1 1', 150000).'"/>')],
+            'beside a value over 1MB' => [$link('href="java&#9;script:alert(1)" title="'.str_repeat('M0 0L1 1', 150000).'"')],
         ];
+    }
 
-        foreach ($hrefs as $case => $href) {
-            $svg = '<svg xmlns="http://www.w3.org/2000/svg"><a href="'.$href.'">Click</a></svg>';
+    #[DataProvider('splitScriptUrlProvider')]
+    public function test_is_valid_svg_rejects_split_script_urls(string $svg): void
+    {
+        $this->assertFalse($this->handler->isValidSvg($svg));
+    }
 
-            $this->assertFalse($this->handler->isValidSvg($svg), "Accepted a javascript: URL split by a {$case}.");
+    public function test_is_valid_svg_rejects_event_handlers_on_their_own_line(): void
+    {
+        foreach (["\n", "\t", "\r\n  "] as $separator) {
+            $svg = '<svg xmlns="http://www.w3.org/2000/svg"'.$separator.'onload="alert(1)"><circle cx="50" cy="50" r="40"/></svg>';
+
+            $this->assertFalse($this->handler->isValidSvg($svg));
         }
+    }
+
+    public function test_is_valid_svg_accepts_quotes_in_text_and_large_path_data(): void
+    {
+        $svg = '<svg xmlns="http://www.w3.org/2000/svg"><text>x="1" and y=\'2\'</text><path d="'.str_repeat('M0 0L1 1', 150000).'"/><a href="#top"><text>Top</text></a></svg>';
+
+        $this->assertTrue($this->handler->isValidSvg($svg));
     }
 
     public function test_is_valid_svg_rejects_entity_encoded_scripts_after_decoding(): void
