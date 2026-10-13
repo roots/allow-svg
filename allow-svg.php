@@ -39,8 +39,9 @@ class SvgUploadHandler
             '/javascript:/i',
 
             // Event handlers (comprehensive coverage)
-            '/\bon\w+\s*=/i', // Event handlers like onclick, onload, etc.
-            '/on[a-zA-Z]+\s*=/i', // Additional event handler patterns (onmouseover, onfocus, etc.)
+            // Event handlers like onclick and onload: an attribute name that
+            // starts with "on", so data-onclick and similar don't match.
+            '/(?<![\w-])on[a-z]+\s*=/i',
 
             // Dangerous tags and elements
             '/<iframe\b/i',
@@ -305,12 +306,57 @@ class SvgUploadHandler
             return false;
         }
 
+        if ($this->hasScriptUrl($content)) {
+            return false;
+        }
+
         // Additional XML parsing with disabled external entities for XXE protection
         if (! $this->isValidXml($content)) {
             return false;
         }
 
         return true;
+    }
+
+    /**
+     * Checks attribute values for script URLs split up to slip past the
+     * patterns: browsers drop tabs, newlines and other control characters from
+     * URLs, so "java&#9;script:" still runs. Values are read from the parsed
+     * document, so character references are resolved and text, comments and
+     * value size can't hide an attribute, then compared with all whitespace
+     * and control characters removed.
+     *
+     * @param  string  $content  The SVG content.
+     * @return bool True if an attribute value holds a script URL, or the content doesn't parse.
+     */
+    private function hasScriptUrl(string $content): bool
+    {
+        $originalInternalErrors = libxml_use_internal_errors(true);
+
+        try {
+            $dom = new \DOMDocument;
+            $dom->resolveExternals = false;
+            $dom->substituteEntities = false;
+
+            if (! $dom->loadXML($content, LIBXML_NONET | LIBXML_PARSEHUGE)) {
+                return true;
+            }
+
+            foreach ((new \DOMXPath($dom))->query('//@*') as $attribute) {
+                $compact = strtolower(preg_replace('/[\x00-\x20\x7F]+/', '', $attribute->value) ?? '');
+
+                foreach (['javascript:', 'vbscript:', 'data:text/html'] as $scheme) {
+                    if (str_contains($compact, $scheme)) {
+                        return true;
+                    }
+                }
+            }
+
+            return false;
+        } finally {
+            libxml_use_internal_errors($originalInternalErrors);
+            libxml_clear_errors();
+        }
     }
 
     /**
