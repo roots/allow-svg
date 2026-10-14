@@ -73,7 +73,7 @@ No configuration required.
 
 ## Security
 
-This plugin uses a **deny-first approach**: it doesn't attempt to sanitize SVGs, it rejects files that appear unsafe.
+This plugin uses a **deny-first approach**: it doesn't attempt to sanitize SVGs, it rejects files that appear unsafe. A file that can't be fully checked, such as invalid XML, is rejected too.
 
 ### Accepts:
 
@@ -86,7 +86,9 @@ This plugin uses a **deny-first approach**: it doesn't attempt to sanitize SVGs,
 - Event handlers like `onclick`, `onload`, etc.
 - External references (`href`, `xlink:href`, `iframe`, `object`, `embed`)
 - CSS expressions and `@import` rules
-- Data URLs containing script or HTML content
+- Data URLs containing script, HTML or SVG content
+- Files whose root isn't an `<svg>` element in the SVG namespace
+- HTML, MathML and XSLT elements, and processing instructions such as `xml-stylesheet`
 
 ### XML Hardening:
 

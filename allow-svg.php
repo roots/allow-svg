@@ -33,7 +33,6 @@ class SvgUploadHandler
             // Script tag patterns - including namespaced variants
             '/<script\b[^<]*(?:(?!<\/script>)<[^<]*)*<\/script>/mi',
             '/<[\w:]+:script\b/i', // Namespaced script tags (e.g., svg:script)
-            '/<\w+\s[^>]*script\w*\s*=/i', // Script attributes
 
             // JavaScript patterns
             '/javascript:/i',
@@ -61,7 +60,6 @@ class SvgUploadHandler
             '/@import/i', // CSS imports
             '/url\s*\(\s*["\']?javascript:/i', // CSS url() with javascript
             '/style\s*=\s*["\'][^"\']*expression\s*\(/i', // Inline style expressions
-            '/style\s*=\s*["\'][^"\']*javascript:/i', // Inline style javascript URLs
             '/behavior\s*:/i', // IE CSS behaviors
 
             // Data URL threats
@@ -286,27 +284,33 @@ class SvgUploadHandler
             return false;
         }
 
-        // Check for dangerous patterns
+        // Check for dangerous patterns. A pattern that can't be evaluated (it
+        // returns false, e.g. at the backtrack limit) rejects the file too, so a
+        // check never passes by failing.
         foreach ($this->dangerousPatterns as $pattern) {
-            if (preg_match($pattern, $content)) {
+            if (preg_match($pattern, $content) !== 0) {
                 return false;
             }
         }
 
         // Additional checks for obfuscation and entity encoding
         $decodedContent = $this->decodeEntities($content);
+        if ($decodedContent === null) {
+            return false;
+        }
+
         foreach ($this->dangerousPatterns as $pattern) {
-            if (preg_match($pattern, $decodedContent)) {
+            if (preg_match($pattern, $decodedContent) !== 0) {
                 return false;
             }
         }
 
         // Check for Unicode and hex escapes in decoded content
-        if (preg_match('/\\\\\\\\u[0-9a-f]{4}/i', $decodedContent) || preg_match('/\\\\\\\\x[0-9a-f]{2}/i', $decodedContent)) {
+        if (preg_match('/\\\\\\\\u[0-9a-f]{4}/i', $decodedContent) !== 0 || preg_match('/\\\\\\\\x[0-9a-f]{2}/i', $decodedContent) !== 0) {
             return false;
         }
 
-        if ($this->hasScriptUrl($content)) {
+        if ($this->isUnsafeDocument($content)) {
             return false;
         }
 
@@ -319,17 +323,33 @@ class SvgUploadHandler
     }
 
     /**
-     * Checks attribute values for script URLs split up to slip past the
-     * patterns: browsers drop tabs, newlines and other control characters from
-     * URLs, so "java&#9;script:" still runs. Values are read from the parsed
-     * document, so character references are resolved and text, comments and
-     * value size can't hide an attribute, then compared with all whitespace
-     * and control characters removed.
+     * Namespaces whose elements browsers render or run in an XML document:
+     * XHTML and MathML, and XSLT, which a stylesheet instruction can apply.
+     */
+    private const RENDERED_NAMESPACES = [
+        'http://www.w3.org/1999/xhtml',
+        'http://www.w3.org/1998/Math/MathML',
+        'http://www.w3.org/1999/XSL/Transform',
+    ];
+
+    /** Elements that run or embed content, rejected in any namespace. */
+    private const DANGEROUS_ELEMENTS = ['script', 'iframe', 'object', 'embed', 'foreignobject'];
+
+    /**
+     * Checks the parsed document, where text, comments and value size can't
+     * hide anything from a pattern. Rejects a doctype, processing instructions
+     * other than XMP metadata (xpacket), a root that isn't an SVG element in the
+     * SVG namespace, elements from rendered namespaces or that run or embed
+     * content, event handler attributes (and animations that target them), and
+     * script URLs split up to slip past the patterns: browsers drop tabs,
+     * newlines and other control characters from URLs, so "java&#9;script:"
+     * still runs. Attribute values have their character references resolved,
+     * then are compared with all whitespace and control characters removed.
      *
      * @param  string  $content  The SVG content.
-     * @return bool True if an attribute value holds a script URL, or the content doesn't parse.
+     * @return bool True if the document is unsafe, or doesn't parse.
      */
-    private function hasScriptUrl(string $content): bool
+    private function isUnsafeDocument(string $content): bool
     {
         $originalInternalErrors = libxml_use_internal_errors(true);
 
@@ -342,10 +362,49 @@ class SvgUploadHandler
                 return true;
             }
 
-            foreach ((new \DOMXPath($dom))->query('//@*') as $attribute) {
-                $compact = strtolower(preg_replace('/[\x00-\x20\x7F]+/', '', $attribute->value) ?? '');
+            if ($dom->doctype) {
+                return true;
+            }
 
-                foreach (['javascript:', 'vbscript:', 'data:text/html'] as $scheme) {
+            $root = $dom->documentElement;
+            if (! $root || $root->localName !== 'svg' || $root->namespaceURI !== 'http://www.w3.org/2000/svg') {
+                return true;
+            }
+
+            $xpath = new \DOMXPath($dom);
+
+            // An xml-stylesheet instruction can apply XSLT to the document.
+            foreach ($xpath->query('//processing-instruction()') as $instruction) {
+                if ($instruction->target !== 'xpacket') {
+                    return true;
+                }
+            }
+
+            foreach ($xpath->query('//*') as $element) {
+                if (in_array($element->namespaceURI, self::RENDERED_NAMESPACES, true)
+                    || in_array(strtolower($element->localName), self::DANGEROUS_ELEMENTS, true)) {
+                    return true;
+                }
+            }
+
+            foreach ($xpath->query('//@*') as $attribute) {
+                // Event handlers, whatever their namespace.
+                if (str_starts_with(strtolower($attribute->localName), 'on')) {
+                    return true;
+                }
+
+                // Animations naming an event handler as their target.
+                if ($attribute->localName === 'attributeName' && str_starts_with(strtolower(trim($attribute->value)), 'on')) {
+                    return true;
+                }
+
+                $compact = preg_replace('/[\x00-\x20\x7F]+/', '', $attribute->value);
+                if ($compact === null) {
+                    return true;
+                }
+
+                $compact = strtolower($compact);
+                foreach (['javascript:', 'vbscript:', 'data:text/html', 'data:image/svg+xml'] as $scheme) {
                     if (str_contains($compact, $scheme)) {
                         return true;
                     }
@@ -363,9 +422,9 @@ class SvgUploadHandler
      * Decodes HTML entities and numeric character references to reveal obfuscated content.
      *
      * @param  string  $content  The content to decode.
-     * @return string The decoded content.
+     * @return string|null The decoded content, or null if a pattern couldn't be evaluated.
      */
-    private function decodeEntities(string $content): string
+    private function decodeEntities(string $content): ?string
     {
         // Decode HTML entities
         $content = html_entity_decode($content, ENT_QUOTES | ENT_HTML5, 'UTF-8');
@@ -376,6 +435,10 @@ class SvgUploadHandler
 
             return $codepoint <= 0x10FFFF ? mb_chr($codepoint, 'UTF-8') : '';
         }, $content);
+
+        if ($content === null) {
+            return null;
+        }
 
         // Decode decimal numeric character references
         $content = preg_replace_callback('/&#([0-9]+);/i', function ($matches) {

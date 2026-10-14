@@ -388,6 +388,8 @@ final class SvgSecurityValidatorTest extends PolyfillTestCase
             'single-quoted value' => [$link("href='java&#9;script:alert(1)'")],
             'vbscript' => [$link('href="vb&#9;script:msgbox(1)"')],
             'data: HTML' => [$link('', '<a><set attributeName="href" to="data:text/h&#9;tml,%3Cscript%3Ealert(1)%3C/script%3E"/></a>')],
+            'data: SVG' => [$link('', '<image href="data:image/svg+xml,%3Csvg%3E%3C/svg%3E"/>')],
+            'data: SVG split by a tab' => [$link('', '<image href="data:image/s&#9;vg+xml,%3Csvg%3E%3C/svg%3E"/>')],
             'SMIL set' => [$link('', '<a><set attributeName="href" to="java&#9;script:alert(1)"/></a>')],
             'SMIL animate values' => [$link('', '<a><animate attributeName="href" values="#;java&#9;script:alert(1)"/></a>')],
             'after a quote in a comment' => [$link('href="java&#9;script:alert(1)"', '<!--="-->')],
@@ -452,5 +454,112 @@ final class SvgSecurityValidatorTest extends PolyfillTestCase
         $result = $this->handler->isValidSvg($mixedCaseHandler);
 
         $this->assertFalse($result);
+    }
+
+    public function test_is_valid_svg_rejects_when_a_pattern_cannot_be_evaluated(): void
+    {
+        // A pattern that errors instead of matching (here, one that doesn't
+        // compile; in practice, one that hits the backtrack limit) must not let
+        // a file through. The handler gets a pattern list of just that pattern.
+        $handler = (new \ReflectionClass(SvgUploadHandler::class))->newInstanceWithoutConstructor();
+        (function (): void {
+            $this->dangerousPatterns = ['/(/'];
+        })->call($handler);
+
+        $result = @$handler->isValidSvg(file_get_contents($this->fixturesPath.'valid.svg'));
+
+        $this->assertFalse($result);
+    }
+
+    public function test_is_valid_svg_accepts_attribute_names_containing_script(): void
+    {
+        $svg = '<svg xmlns="http://www.w3.org/2000/svg"><g description="A circle"><circle cx="50" cy="50" r="40"/></g></svg>';
+
+        $this->assertTrue($this->handler->isValidSvg($svg));
+    }
+
+    public static function nonSvgRootProvider(): array
+    {
+        return [
+            'another root element' => ['<doc><svg xmlns="http://www.w3.org/2000/svg"></svg></doc>'],
+            'no SVG namespace' => ['<svg><rect width="1" height="1"/></svg>'],
+            'another namespace' => ['<svg xmlns="http://www.w3.org/1999/xhtml"><rect width="1" height="1"/></svg>'],
+        ];
+    }
+
+    #[DataProvider('nonSvgRootProvider')]
+    public function test_is_valid_svg_rejects_documents_without_an_svg_root(string $svg): void
+    {
+        $this->assertFalse($this->handler->isValidSvg($svg));
+    }
+
+    public static function eventHandlerDocumentProvider(): array
+    {
+        return [
+            'onload' => ['<svg xmlns="http://www.w3.org/2000/svg" onload="alert(1)"></svg>', true],
+            'mixed case' => ['<svg xmlns="http://www.w3.org/2000/svg"><rect onClick="alert(1)"/></svg>', true],
+            'namespaced' => ['<svg xmlns="http://www.w3.org/2000/svg" xmlns:x="urn:x"><rect x:onclick="alert(1)"/></svg>', true],
+            'data-onclick' => ['<svg xmlns="http://www.w3.org/2000/svg"><rect data-onclick="1"/></svg>', false],
+        ];
+    }
+
+    /**
+     * The document check alone, so event handlers stay rejected even if the
+     * pattern that also catches them changes.
+     */
+    #[DataProvider('eventHandlerDocumentProvider')]
+    public function test_document_check_rejects_event_handler_attributes(string $svg, bool $unsafe): void
+    {
+        $method = new \ReflectionMethod($this->handler, 'isUnsafeDocument');
+
+        $this->assertSame($unsafe, $method->invoke($this->handler, $svg));
+    }
+
+    public static function unsafeStructureProvider(): array
+    {
+        $svg = fn (string $inner, string $attributes = '') => '<svg xmlns="http://www.w3.org/2000/svg"'.$attributes.'>'.$inner.'</svg>';
+
+        return [
+            'doctype' => ['<!DOCTYPE svg><svg xmlns="http://www.w3.org/2000/svg"></svg>'],
+            'xml-stylesheet instruction' => ['<?xml-stylesheet type="text/xsl" href="#t"?>'.$svg('')],
+            'instruction inside the document' => [$svg('<?php echo 1; ?>')],
+            'prefixed XHTML element' => [$svg('<h:p xmlns:h="http://www.w3.org/1999/xhtml">x</h:p>')],
+            'XHTML default namespace' => [$svg('<div xmlns="http://www.w3.org/1999/xhtml">x</div>')],
+            'MathML' => [$svg('<math xmlns="http://www.w3.org/1998/Math/MathML"><mi>x</mi></math>')],
+            'XSLT element' => [$svg('<xsl:template xmlns:xsl="http://www.w3.org/1999/XSL/Transform" match="/"/>')],
+            'iframe in another namespace' => [$svg('<x:iframe xmlns:x="urn:x"/>')],
+            'object in another namespace' => [$svg('<x:object xmlns:x="urn:x"/>')],
+            'embed in another namespace' => [$svg('<x:embed xmlns:x="urn:x"/>')],
+            'foreignObject in another namespace' => [$svg('<x:foreignObject xmlns:x="urn:x"/>')],
+            'animation targeting an event handler' => [$svg('<rect><set attributeName="onclick" to="x"/></rect>')],
+        ];
+    }
+
+    /**
+     * The document check alone, so these stay rejected even where a pattern
+     * also catches them.
+     */
+    #[DataProvider('unsafeStructureProvider')]
+    public function test_document_check_rejects_unsafe_structure(string $svg): void
+    {
+        $method = new \ReflectionMethod($this->handler, 'isUnsafeDocument');
+
+        $this->assertTrue($method->invoke($this->handler, $svg));
+    }
+
+    public static function editorMetadataProvider(): array
+    {
+        return [
+            'XMP metadata' => ['<svg xmlns="http://www.w3.org/2000/svg"><metadata><?xpacket begin="" id="W5M0MpCehiHzreSzNTczkc9d"?><x:xmpmeta xmlns:x="adobe:ns:meta/"/><?xpacket end="w"?></metadata><rect width="1" height="1"/></svg>'],
+            'Inkscape and RDF' => ['<svg xmlns="http://www.w3.org/2000/svg" xmlns:inkscape="http://www.inkscape.org/namespaces/inkscape" xmlns:sodipodi="http://sodipodi.sourceforge.net/DTD/sodipodi-0.dtd" xmlns:rdf="http://www.w3.org/1999/02/22-rdf-syntax-ns#" xmlns:dc="http://purl.org/dc/elements/1.1/" inkscape:version="1.3"><sodipodi:namedview id="view" inkscape:zoom="1"/><metadata><rdf:RDF><rdf:Description><dc:title>Icon</dc:title></rdf:Description></rdf:RDF></metadata><rect width="1" height="1"/></svg>'],
+            'Illustrator' => ['<svg xmlns="http://www.w3.org/2000/svg" xmlns:i="http://ns.adobe.com/AdobeIllustrator/10.0/"><i:pgf id="adobe_illustrator_pgf"/><rect width="1" height="1"/></svg>'],
+            'animation of a presentation attribute' => ['<svg xmlns="http://www.w3.org/2000/svg"><rect width="1" height="1"><animate attributeName="opacity" from="0" to="1" dur="1s"/></rect></svg>'],
+        ];
+    }
+
+    #[DataProvider('editorMetadataProvider')]
+    public function test_is_valid_svg_accepts_editor_metadata(string $svg): void
+    {
+        $this->assertTrue($this->handler->isValidSvg($svg));
     }
 }
