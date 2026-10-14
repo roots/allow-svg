@@ -18,6 +18,7 @@ Roots is an independent open source org, supported only by developers like you. 
 - ✅ **SVG Upload Support** — Enables `.svg` uploads in the WordPress media library
 - 🔒 **Security-First Validation** — Detects and rejects SVG files containing potentially harmful content
 - 🖼️ **Media Library Integration** — SVGs display inline like standard images
+- ☁️ **Remote Media Storage** — Works with uploads kept in S3 and other stream-wrapped storage
 - 🧩 **Zero Dependencies** — No external libraries or frameworks
 - ⚙️ **Zero Configuration** — No settings or admin bloat
 
@@ -84,7 +85,7 @@ This plugin uses a **deny-first approach**: it doesn't attempt to sanitize SVGs,
 
 - `<script>` tags or inline JavaScript
 - Event handlers like `onclick`, `onload`, etc.
-- External references (`href`, `xlink:href`, `iframe`, `object`, `embed`)
+- External `http(s)` references in `<use>`, `<image>` and `xlink:href`, and `<iframe>`, `<object>`, `<embed>` and `<foreignObject>` elements
 - CSS expressions and `@import` rules
 - Data URLs containing script, HTML or SVG content
 - Files whose root isn't an `<svg>` element in the SVG namespace
