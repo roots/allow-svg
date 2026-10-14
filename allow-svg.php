@@ -113,7 +113,6 @@ class SvgUploadHandler
         add_filter('wp_handle_upload', [$this, 'handleSvgUploadResult'], PHP_INT_MAX, 2);
         add_filter('wp_generate_attachment_metadata', [$this, 'generateSvgMetadata'], 10, 2);
         add_filter('getimagesize_mimes_to_exts', [$this, 'addSvgToImageSizeExts']);
-        add_filter('wp_image_file_matches_image_mime', [$this, 'allowSvgImageMime'], 10, 3);
         add_filter('wp_calculate_image_srcset_meta', [$this, 'disableSvgSrcset'], 10, 4);
         add_action('add_attachment', [$this, 'validateExistingAttachment']);
     }
@@ -674,20 +673,6 @@ class SvgUploadHandler
         $mimes['image/svg+xml'] = 'svg';
 
         return $mimes;
-    }
-
-    /**
-     * Allows SVG image mime types.
-     *
-     * @param  bool  $result  The result of the mime type check.
-     * @param  string  $file  The file path.
-     * @param  string  $filename  The file name.
-     * @param  array  $mimes  The list of allowed mime types.
-     * @return bool True if the mime type is allowed, false otherwise.
-     */
-    public function allowSvgImageMime(bool $result, string $file, string $filename, array $mimes): bool
-    {
-        return str_ends_with($filename, '.svg') || $result;
     }
 
     /**
