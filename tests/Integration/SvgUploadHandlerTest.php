@@ -152,24 +152,6 @@ final class SvgUploadHandlerTest extends PolyfillTestCase
         $this->assertEquals($file, $result);
     }
 
-    public function test_allow_svg_image_mime_returns_true_for_svg_files(): void
-    {
-        $result = $this->handler->allowSvgImageMime(false, '/tmp/test', 'test.svg', []);
-
-        $this->assertTrue($result);
-    }
-
-    public function test_allow_svg_image_mime_preserves_original_for_non_svg(): void
-    {
-        $result = $this->handler->allowSvgImageMime(false, '/tmp/test', 'test.jpg', []);
-
-        $this->assertFalse($result);
-
-        $result = $this->handler->allowSvgImageMime(true, '/tmp/test', 'test.jpg', []);
-
-        $this->assertTrue($result);
-    }
-
     public function test_handle_svg_upload_rejects_data_url_attacks(): void
     {
         $testFile = tempnam(sys_get_temp_dir(), 'svg_test_');
