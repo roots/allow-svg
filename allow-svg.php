@@ -323,13 +323,28 @@ class SvgUploadHandler
     }
 
     /**
+     * Namespaces whose elements browsers render or run in an XML document:
+     * XHTML and MathML, and XSLT, which a stylesheet instruction can apply.
+     */
+    private const RENDERED_NAMESPACES = [
+        'http://www.w3.org/1999/xhtml',
+        'http://www.w3.org/1998/Math/MathML',
+        'http://www.w3.org/1999/XSL/Transform',
+    ];
+
+    /** Elements that run or embed content, rejected in any namespace. */
+    private const DANGEROUS_ELEMENTS = ['script', 'iframe', 'object', 'embed', 'foreignobject'];
+
+    /**
      * Checks the parsed document, where text, comments and value size can't
-     * hide anything from a pattern. Rejects a document whose root isn't an SVG
-     * element in the SVG namespace, event handler attributes, and script URLs
-     * split up to slip past the patterns: browsers drop tabs, newlines and
-     * other control characters from URLs, so "java&#9;script:" still runs.
-     * Attribute values have their character references resolved, then are
-     * compared with all whitespace and control characters removed.
+     * hide anything from a pattern. Rejects a doctype, processing instructions
+     * other than XMP metadata (xpacket), a root that isn't an SVG element in the
+     * SVG namespace, elements from rendered namespaces or that run or embed
+     * content, event handler attributes (and animations that target them), and
+     * script URLs split up to slip past the patterns: browsers drop tabs,
+     * newlines and other control characters from URLs, so "java&#9;script:"
+     * still runs. Attribute values have their character references resolved,
+     * then are compared with all whitespace and control characters removed.
      *
      * @param  string  $content  The SVG content.
      * @return bool True if the document is unsafe, or doesn't parse.
@@ -347,14 +362,39 @@ class SvgUploadHandler
                 return true;
             }
 
+            if ($dom->doctype) {
+                return true;
+            }
+
             $root = $dom->documentElement;
             if (! $root || $root->localName !== 'svg' || $root->namespaceURI !== 'http://www.w3.org/2000/svg') {
                 return true;
             }
 
-            foreach ((new \DOMXPath($dom))->query('//@*') as $attribute) {
+            $xpath = new \DOMXPath($dom);
+
+            // An xml-stylesheet instruction can apply XSLT to the document.
+            foreach ($xpath->query('//processing-instruction()') as $instruction) {
+                if ($instruction->target !== 'xpacket') {
+                    return true;
+                }
+            }
+
+            foreach ($xpath->query('//*') as $element) {
+                if (in_array($element->namespaceURI, self::RENDERED_NAMESPACES, true)
+                    || in_array(strtolower($element->localName), self::DANGEROUS_ELEMENTS, true)) {
+                    return true;
+                }
+            }
+
+            foreach ($xpath->query('//@*') as $attribute) {
                 // Event handlers, whatever their namespace.
                 if (str_starts_with(strtolower($attribute->localName), 'on')) {
+                    return true;
+                }
+
+                // Animations naming an event handler as their target.
+                if ($attribute->localName === 'attributeName' && str_starts_with(strtolower(trim($attribute->value)), 'on')) {
                     return true;
                 }
 

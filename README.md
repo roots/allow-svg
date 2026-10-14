@@ -88,6 +88,7 @@ This plugin uses a **deny-first approach**: it doesn't attempt to sanitize SVGs,
 - CSS expressions and `@import` rules
 - Data URLs containing script, HTML or SVG content
 - Files whose root isn't an `<svg>` element in the SVG namespace
+- HTML, MathML and XSLT elements, and processing instructions such as `xml-stylesheet`
 
 ### XML Hardening:
 
