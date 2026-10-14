@@ -22,7 +22,21 @@ if (! defined('ABSPATH')) {
 
 class SvgUploadHandler
 {
+    /** Largest SVG accepted, in bytes, on every upload path. */
+    private const MAX_FILE_SIZE = 5 * 1024 * 1024;
+
+    private const TOO_LARGE_MESSAGE = 'SVG file exceeds maximum size limit of '.(self::MAX_FILE_SIZE / 1024 / 1024).'MB.';
+
+    private const UNREADABLE_MESSAGE = 'SVG file could not be read to check it, so it was rejected.';
+
+    private const NOT_SVG_MESSAGE = 'File is not a valid SVG.';
+
+    private const UNSAFE_MESSAGE = 'SVG file contains dangerous content and was rejected for security reasons.';
+
     private readonly array $dangerousPatterns;
+
+    /** Files handleSvgUploadResult() has checked in this request, by path. */
+    private array $checkedFiles = [];
 
     /**
      * Initializes the plugin.
@@ -67,9 +81,9 @@ class SvgUploadHandler
             '/data:\s*text\/html/i', // Data URLs with HTML content
             '/href\s*=\s*["\']?data:.*base64/i', // Block base64-encoded data in href
 
-            // XML/DTD threats (XXE and entity bomb protection)
-            '/<!DOCTYPE\b/i', // DOCTYPE declarations
-            '/<!ENTITY\b/i', // Entity declarations
+            // XML/DTD threats (XXE and entity bomb protection); DOCTYPE and
+            // ENTITY declarations are found with a plain text search in
+            // hasDeclaration(), which stays fast on large files without PCRE JIT.
             '/&\w+;/', // Entity references
             '/%\w+;/', // Parameter entity references
 
@@ -83,9 +97,6 @@ class SvgUploadHandler
             '/setTimeout\s*\(/i', // setTimeout calls
             '/setInterval\s*\(/i', // setInterval calls
             '/Function\s*\(/i', // Function constructor
-
-            // Filter evasion patterns
-            '/\\[0-9]{1,3}/', // Octal escapes
         ];
     }
 
@@ -98,7 +109,8 @@ class SvgUploadHandler
         add_filter('wp_check_filetype_and_ext', [$this, 'checkSvgFiletype'], 10, 5);
         add_filter('wp_handle_upload_prefilter', [$this, 'handleSvgUpload']);
         add_filter('wp_handle_sideload_prefilter', [$this, 'handleSvgUpload']);
-        add_filter('wp_handle_upload', [$this, 'handleSvgUploadResult'], 10, 2);
+        // Last, so it checks the file as stored after any other plugin changes it
+        add_filter('wp_handle_upload', [$this, 'handleSvgUploadResult'], PHP_INT_MAX, 2);
         add_filter('wp_generate_attachment_metadata', [$this, 'generateSvgMetadata'], 10, 2);
         add_filter('getimagesize_mimes_to_exts', [$this, 'addSvgToImageSizeExts']);
         add_filter('wp_image_file_matches_image_mime', [$this, 'allowSvgImageMime'], 10, 3);
@@ -131,7 +143,7 @@ class SvgUploadHandler
      */
     public function checkSvgFiletype(array $data, string $file, string $filename, ?array $mimes, ?string $realMime = null): array
     {
-        $ext = pathinfo($filename, PATHINFO_EXTENSION);
+        $ext = strtolower(pathinfo($filename, PATHINFO_EXTENSION));
 
         if ($ext !== 'svg') {
             return $data;
@@ -152,23 +164,19 @@ class SvgUploadHandler
      */
     public function handleSvgUpload(array $file): array
     {
-        if (! isset($file['type']) || $file['type'] !== 'image/svg+xml') {
+        // The type comes from the browser, so a .svg sent under another type
+        // is checked too.
+        $ext = strtolower(pathinfo($file['name'] ?? '', PATHINFO_EXTENSION));
+        $declaredSvg = ($file['type'] ?? '') === 'image/svg+xml';
+
+        if (! $declaredSvg && $ext !== 'svg') {
             return $file;
         }
 
         // Validate file extension
-        if (isset($file['name'])) {
-            $ext = strtolower(pathinfo($file['name'], PATHINFO_EXTENSION));
-            if ($ext !== 'svg') {
-                $file['error'] = 'Invalid file type. Only SVG files are allowed.';
-
-                return $file;
-            }
-        }
-
-        // Check file size limit (5MB maximum)
-        if (isset($file['size']) && $file['size'] > 5 * 1024 * 1024) {
-            $file['error'] = 'SVG file exceeds maximum size limit of 5MB.';
+        if (isset($file['name']) && $ext !== 'svg') {
+            $file['error'] = 'Invalid file type. Only SVG files are allowed.';
+            $this->logRejection($file['error'], $file['name']);
 
             return $file;
         }
@@ -177,32 +185,26 @@ class SvgUploadHandler
         $filePath = realpath($file['tmp_name']);
         if ($filePath === false || ! is_file($filePath)) {
             $file['error'] = 'Invalid file path.';
+            $this->logRejection($file['error'], $file['name'] ?? $file['tmp_name']);
 
             return $file;
         }
 
-        if (! $this->isSvgFile($filePath)) {
-            $file['error'] = 'File is not a valid SVG.';
+        // Reads the file itself, so its actual size counts, not the size the
+        // browser reported
+        $content = $this->readFile($filePath);
 
-            return $file;
+        // Log upload attempt. The read stops just past the limit, so a larger
+        // file's exact size isn't known.
+        if ($content !== null && isset($file['name'])) {
+            $size = strlen($content) > self::MAX_FILE_SIZE ? 'over the size limit' : strlen($content).' bytes';
+            error_log(sprintf('SVG upload attempt: %s (size: %s)', $file['name'], $size));
         }
 
-        $content = file_get_contents($filePath);
-
-        // Log upload attempt
-        if (isset($file['name'])) {
-            error_log(sprintf('SVG upload attempt: %s (size: %d bytes)', $file['name'], $file['size'] ?? 0));
-        }
-
-        if ($content === false || ! $this->isValidSvg($content)) {
-            // Log security rejection
-            if (isset($file['name'])) {
-                error_log(sprintf('SVG file contains dangerous content and was rejected for security reasons: %s', $file['name']));
-            }
-
-            $file['error'] = 'SVG file contains dangerous content and was rejected for security reasons.';
-
-            return $file;
+        $error = $this->rejectionMessage($content);
+        if ($error !== null) {
+            $this->logRejection($error, $file['name'] ?? $file['tmp_name']);
+            $file['error'] = $error;
         }
 
         return $file;
@@ -226,45 +228,79 @@ class SvgUploadHandler
         // below read them through the wrapper as they are.
         $filePath = wp_is_stream($upload['file']) ? $upload['file'] : realpath($upload['file']);
         if ($filePath === false || ! is_file($filePath)) {
+            // Logged because another plugin moving the file would make every
+            // SVG upload fail here
+            $this->logRejection('Invalid file path.', $upload['file']);
+
             return [
                 'error' => 'Invalid file path.',
             ];
         }
 
-        $content = file_get_contents($filePath);
-        if ($content !== false && ! $this->isValidSvg($content)) {
-            // Log security rejection
-            error_log(sprintf('SVG file contains dangerous content and was rejected for security reasons: %s', $upload['file']));
+        // The file was just written in this request, so one that can't be read
+        // can't be checked and is rejected
+        $content = $this->readFile($filePath);
+        $error = $this->rejectionMessage($content);
+
+        if ($error !== null) {
+            $this->logRejection($error, $upload['file']);
 
             // Delete the uploaded file
             unlink($filePath);
 
             return [
-                'error' => 'SVG file contains dangerous content and was rejected for security reasons.',
+                'error' => $error,
             ];
         }
+
+        // add_attachment doesn't need to read it again
+        $this->checkedFiles[$upload['file']] = true;
 
         return $upload;
     }
 
     /**
-     * Checks if the file is an SVG file.
+     * Reads a file for checking, at most one byte past the size limit, so the
+     * limit holds even when the file's size can't be determined.
      *
      * @param  string  $filePath  The file path.
-     * @return bool True if the file is an SVG file, false otherwise.
+     * @return string|null The content, or null if the file can't be read.
      */
-    private function isSvgFile(string $filePath): bool
+    private function readFile(string $filePath): ?string
     {
-        if (! file_exists($filePath)) {
-            return false;
-        }
+        // Silenced: callers turn a failed read into a rejection with its own message
+        $content = @file_get_contents($filePath, false, null, 0, self::MAX_FILE_SIZE + 1);
 
-        $content = file_get_contents($filePath);
-        if ($content === false) {
-            return false;
-        }
+        return $content === false ? null : $content;
+    }
 
-        return str_contains($content, '<svg') && str_contains($content, '</svg>');
+    /**
+     * The reason to reject a file's content, if any.
+     *
+     * @param  string|null  $content  The content from readFile().
+     * @return string|null The error message, or null if the content is acceptable.
+     */
+    private function rejectionMessage(?string $content): ?string
+    {
+        return match (true) {
+            $content === null => self::UNREADABLE_MESSAGE,
+            strlen($content) > self::MAX_FILE_SIZE => self::TOO_LARGE_MESSAGE,
+            ! str_contains($content, '<svg') || ! str_contains($content, '</svg>') => self::NOT_SVG_MESSAGE,
+            ! $this->isValidSvg($content) => self::UNSAFE_MESSAGE,
+            default => null,
+        };
+    }
+
+    /**
+     * Logs why a file was rejected, so failures like unreadable remote
+     * storage show up as well as unsafe content.
+     *
+     * @param  string  $error  The rejection message.
+     * @param  string  $file  The file name or path.
+     */
+    private function logRejection(string $error, string $file): void
+    {
+        error_log(sprintf('%s (%s)', $error, $file));
     }
 
     /**
@@ -284,6 +320,10 @@ class SvgUploadHandler
             return false;
         }
 
+        if ($this->hasDeclaration($content)) {
+            return false;
+        }
+
         // Check for dangerous patterns. A pattern that can't be evaluated (it
         // returns false, e.g. at the backtrack limit) rejects the file too, so a
         // check never passes by failing.
@@ -295,7 +335,7 @@ class SvgUploadHandler
 
         // Additional checks for obfuscation and entity encoding
         $decodedContent = $this->decodeEntities($content);
-        if ($decodedContent === null) {
+        if ($decodedContent === null || $this->hasDeclaration($decodedContent)) {
             return false;
         }
 
@@ -303,11 +343,6 @@ class SvgUploadHandler
             if (preg_match($pattern, $decodedContent) !== 0) {
                 return false;
             }
-        }
-
-        // Check for Unicode and hex escapes in decoded content
-        if (preg_match('/\\\\\\\\u[0-9a-f]{4}/i', $decodedContent) !== 0 || preg_match('/\\\\\\\\x[0-9a-f]{2}/i', $decodedContent) !== 0) {
-            return false;
         }
 
         if ($this->isUnsafeDocument($content)) {
@@ -358,7 +393,7 @@ class SvgUploadHandler
             $dom->resolveExternals = false;
             $dom->substituteEntities = false;
 
-            if (! $dom->loadXML($content, LIBXML_NONET | LIBXML_PARSEHUGE)) {
+            if (! $dom->loadXML($content, LIBXML_NONET)) {
                 return true;
             }
 
@@ -371,44 +406,26 @@ class SvgUploadHandler
                 return true;
             }
 
-            $xpath = new \DOMXPath($dom);
-
-            // An xml-stylesheet instruction can apply XSLT to the document.
-            foreach ($xpath->query('//processing-instruction()') as $instruction) {
-                if ($instruction->target !== 'xpacket') {
-                    return true;
-                }
-            }
-
-            foreach ($xpath->query('//*') as $element) {
-                if (in_array($element->namespaceURI, self::RENDERED_NAMESPACES, true)
-                    || in_array(strtolower($element->localName), self::DANGEROUS_ELEMENTS, true)) {
-                    return true;
-                }
-            }
-
-            foreach ($xpath->query('//@*') as $attribute) {
-                // Event handlers, whatever their namespace.
-                if (str_starts_with(strtolower($attribute->localName), 'on')) {
+            // Walk the document one node at a time, in document order, instead
+            // of collecting every node up front, which takes memory in
+            // proportion to the number of attributes.
+            $node = $dom->firstChild;
+            while ($node) {
+                if ($this->isUnsafeNode($node)) {
                     return true;
                 }
 
-                // Animations naming an event handler as their target.
-                if ($attribute->localName === 'attributeName' && str_starts_with(strtolower(trim($attribute->value)), 'on')) {
-                    return true;
+                if ($node->firstChild) {
+                    $node = $node->firstChild;
+
+                    continue;
                 }
 
-                $compact = preg_replace('/[\x00-\x20\x7F]+/', '', $attribute->value);
-                if ($compact === null) {
-                    return true;
+                while ($node && ! $node->nextSibling) {
+                    $node = $node->parentNode;
                 }
 
-                $compact = strtolower($compact);
-                foreach (['javascript:', 'vbscript:', 'data:text/html', 'data:image/svg+xml'] as $scheme) {
-                    if (str_contains($compact, $scheme)) {
-                        return true;
-                    }
-                }
+                $node = $node?->nextSibling;
             }
 
             return false;
@@ -416,6 +433,68 @@ class SvgUploadHandler
             libxml_use_internal_errors($originalInternalErrors);
             libxml_clear_errors();
         }
+    }
+
+    /**
+     * Checks for DOCTYPE and ENTITY declarations (XXE and entity expansion)
+     * with a plain text search, which unlike a pattern stays fast on large
+     * files when PCRE JIT is off.
+     *
+     * @param  string  $content  The content to check.
+     * @return bool True if the content contains a declaration.
+     */
+    private function hasDeclaration(string $content): bool
+    {
+        return stripos($content, '<!DOCTYPE') !== false || stripos($content, '<!ENTITY') !== false;
+    }
+
+    /**
+     * Checks one node of the parsed document, with its attributes.
+     *
+     * @param  \DOMNode  $node  The node.
+     * @return bool True if the node is unsafe.
+     */
+    private function isUnsafeNode(\DOMNode $node): bool
+    {
+        // An xml-stylesheet instruction can apply XSLT to the document.
+        if ($node instanceof \DOMProcessingInstruction) {
+            return $node->target !== 'xpacket';
+        }
+
+        if (! $node instanceof \DOMElement) {
+            return false;
+        }
+
+        if (in_array($node->namespaceURI, self::RENDERED_NAMESPACES, true)
+            || in_array(strtolower($node->localName), self::DANGEROUS_ELEMENTS, true)) {
+            return true;
+        }
+
+        foreach ($node->attributes as $attribute) {
+            // Event handlers, whatever their namespace.
+            if (str_starts_with(strtolower($attribute->localName), 'on')) {
+                return true;
+            }
+
+            // Animations naming an event handler as their target.
+            if ($attribute->localName === 'attributeName' && str_starts_with(strtolower(trim($attribute->value)), 'on')) {
+                return true;
+            }
+
+            $compact = preg_replace('/[\x00-\x20\x7F]+/', '', $attribute->value);
+            if ($compact === null) {
+                return true;
+            }
+
+            $compact = strtolower($compact);
+            foreach (['javascript:', 'vbscript:', 'data:text/html', 'data:image/svg+xml'] as $scheme) {
+                if (str_contains($compact, $scheme)) {
+                    return true;
+                }
+            }
+        }
+
+        return false;
     }
 
     /**
@@ -470,7 +549,7 @@ class SvgUploadHandler
             $dom->substituteEntities = false;
             $dom->recover = false;
 
-            $result = $dom->loadXML($content, LIBXML_PARSEHUGE | LIBXML_NOERROR | LIBXML_NOWARNING | LIBXML_NOCDATA);
+            $result = $dom->loadXML($content, LIBXML_NONET | LIBXML_NOERROR | LIBXML_NOWARNING | LIBXML_NOCDATA);
 
             // Check for XML parsing errors
             $errors = libxml_get_errors();
@@ -538,7 +617,7 @@ class SvgUploadHandler
             $dom->resolveExternals = false;
             $dom->substituteEntities = false;
 
-            if (! $dom->loadXML($content, LIBXML_PARSEHUGE | LIBXML_NOERROR | LIBXML_NOWARNING)) {
+            if (! $dom->loadXML($content, LIBXML_NONET | LIBXML_NOERROR | LIBXML_NOWARNING)) {
                 return null;
             }
 
@@ -646,13 +725,26 @@ class SvgUploadHandler
             return;
         }
 
-        $content = file_get_contents($filePath);
-        if ($content !== false && ! $this->isValidSvg($content)) {
-            unlink($filePath);
-            wp_delete_attachment($attachmentId, true);
+        // Checked when it was uploaded in this request; each check covers one
+        // attachment
+        if (isset($this->checkedFiles[$filePath])) {
+            unset($this->checkedFiles[$filePath]);
 
-            wp_die('SVG file contains dangerous content and was rejected for security reasons.');
+            return;
         }
+
+        // A read can fail briefly on remote storage, so try twice before
+        // rejecting a file that can't be checked
+        $error = $this->rejectionMessage($this->readFile($filePath) ?? $this->readFile($filePath));
+        if ($error === null) {
+            return;
+        }
+
+        $this->logRejection($error, $filePath);
+        unlink($filePath);
+        wp_delete_attachment($attachmentId, true);
+
+        wp_die($error);
     }
 }
 

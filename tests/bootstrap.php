@@ -13,6 +13,8 @@ define('ABSPATH', '/tmp/wordpress/');
 if (! function_exists('add_filter')) {
     function add_filter(string $hook, callable $callback, int $priority = 10, int $acceptedArgs = 1): bool
     {
+        $GLOBALS['allow_svg_test_filters'][$hook][] = ['callback' => $callback, 'priority' => $priority];
+
         return true;
     }
 }
@@ -61,7 +63,23 @@ if (! function_exists('get_post')) {
 if (! function_exists('get_attached_file')) {
     function get_attached_file(int $attachmentId): string
     {
-        return '/tmp/test.svg';
+        return $GLOBALS['allow_svg_test_attached_file'] ?? '/tmp/test.svg';
+    }
+}
+
+if (! function_exists('wp_delete_attachment')) {
+    function wp_delete_attachment(int $attachmentId, bool $forceDelete = false): bool
+    {
+        $GLOBALS['allow_svg_test_deleted_attachments'][] = $attachmentId;
+
+        return true;
+    }
+}
+
+if (! function_exists('wp_die')) {
+    function wp_die(string $message = ''): never
+    {
+        throw new \RuntimeException($message);
     }
 }
 

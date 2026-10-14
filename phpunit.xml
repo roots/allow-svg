@@ -23,4 +23,8 @@
             <file>allow-svg.php</file>
         </include>
     </source>
+    <php>
+        <!-- The plugin logs uploads and rejections; keep them out of the test output -->
+        <ini name="error_log" value="/dev/null"/>
+    </php>
 </phpunit>

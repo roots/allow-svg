@@ -562,4 +562,14 @@ final class SvgSecurityValidatorTest extends PolyfillTestCase
     {
         $this->assertTrue($this->handler->isValidSvg($svg));
     }
+
+    public function test_is_valid_svg_rejects_nesting_past_libxml_depth_limit(): void
+    {
+        // libxml's default depth limit applies (no LIBXML_PARSEHUGE); far deeper
+        // than real exports nest.
+        $nested = fn (int $depth) => '<svg xmlns="http://www.w3.org/2000/svg">'.str_repeat('<g>', $depth).'<rect width="1" height="1"/>'.str_repeat('</g>', $depth).'</svg>';
+
+        $this->assertTrue($this->handler->isValidSvg($nested(254)));
+        $this->assertFalse($this->handler->isValidSvg($nested(255)));
+    }
 }
